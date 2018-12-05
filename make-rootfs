@@ -1,0 +1,65 @@
+#!/bin/bash
+#
+# Setup: have already built kernel in KERNELDIR, with enclosed kernel
+# config.
+#
+KERNELDIR=${KERNELDIR:-~/ext/wireless-testing}
+HERE=$(/bin/pwd)
+
+set -e
+
+mkdir -p rootfs
+
+truncate -s 512M rootfs.img
+sudo mkfs.ext4 rootfs.img
+sudo mount -t ext4 rootfs.img -o loop rootfs
+
+# install base debian
+sudo debootstrap --arch=amd64 stable rootfs http://ftp.us.debian.org/debian/ ||:
+
+# set up mounts used by VM tests
+sudo mkdir -p rootfs/local
+
+cat<<_EOM | sudo tee rootfs/etc/fstab
+proc	/proc	proc	defaults	0	0
+/dev/vda  / ext4  defaults   0   0
+/dev/local    /local    9p    trans=virtio,version=9p2000.L   0   0
+_EOM
+
+echo "vm" | sudo tee rootfs/etc/hostname
+cat<<_EOM | sudo tee rootfs/etc/hosts
+127.0.0.1	localhost vm
+
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+_EOM
+
+# install kernel modules
+cp config-vm $KERNELDIR/.config
+pushd $KERNELDIR
+sudo make modules_install INSTALL_MOD_PATH=$HERE/rootfs
+popd
+
+# install own init
+sudo cp init.sh rootfs/sbin
+pushd rootfs/sbin
+sudo rm init
+sudo ln -s /sbin/init.sh init
+popd
+
+# install iw
+sudo mount -t proc none rootfs/proc
+sudo mount --bind /sys rootfs/sys
+sudo mount --bind /dev rootfs/dev
+sudo cp /etc/resolv.conf rootfs/resolv.conf
+sudo chroot rootfs apt-get -y install iw sudo rfkill \
+    libconfig-dev procps psmisc
+sudo chroot rootfs apt-get clean
+
+sudo umount -R rootfs
+
+sudo zerofree rootfs.img
+xz rootfs.img
