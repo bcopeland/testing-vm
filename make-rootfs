@@ -1,9 +1,10 @@
 #!/bin/bash
 #
-# Setup: have already built kernel in KERNELDIR, with enclosed kernel
-# config.
+# Setup: clone wireless-testing and wireless-regdb git trees under
+#        the paths pointed to by below env vars
 #
-KERNELDIR=${KERNELDIR:-~/ext/wireless-testing}
+KERNEL_DIR=${KERNEL_DIR:-~/ext/wireless-testing}
+WIRELESS_REGDB_DIR=${WIRELESS_REGDB_DIR:-~/ext/wireless-regdb}
 HERE=$(/bin/pwd)
 
 set -e
@@ -38,9 +39,11 @@ ff02::2 ip6-allrouters
 _EOM
 
 # install kernel modules
-cp config-vm $KERNELDIR/.config
-pushd $KERNELDIR
+cp config-vm $KERNEL_DIR/.config
+pushd $KERNEL_DIR
+make -j8
 sudo make modules_install INSTALL_MOD_PATH=$HERE/rootfs
+cp arch/x86_64/boot/bzImage $HERE/testing-vm-kernel
 popd
 
 # install own init
@@ -49,6 +52,10 @@ pushd rootfs/sbin
 sudo rm init
 sudo ln -s /sbin/init.sh init
 popd
+
+# install wireless regdb
+sudo mkdir -p rootfs/lib/firmware
+sudo cp ${WIRELESS_REGDB_DIR}/regulatory.* rootfs/lib/firmware/
 
 # install iw
 sudo mount -t proc none rootfs/proc
@@ -61,5 +68,6 @@ sudo chroot rootfs apt-get clean
 
 sudo umount -R rootfs
 
-sudo zerofree rootfs.img
-xz rootfs.img
+mv rootfs.img testing-vm-rootfs.img
+sudo zerofree testing-vm-rootfs.img
+xz testing-vm-rootfs.img
